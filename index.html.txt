@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive Virus Taxonomy Visualizer — Rooted</title>
+  <style>
+    :root {
+      --bg: #0b1220; --panel: #0f172a; --card: #0f172a; --text: #e5e7eb; --muted:#94a3b8;
+      --edge:#334155; --accent:#22d3ee; --hi:#f59e0b; --badge:#1f2937;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:Inter, ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial}
+    .app{display:grid;grid-template-columns:340px 1fr;height:100%}
+    .left{border-right:1px solid #1f2937;background:linear-gradient(180deg,#0e1726 0%, #0b1220 100%);padding:18px 14px;overflow:auto}
+    .brand{display:flex;gap:10px;align-items:center;margin-bottom:8px}
+    .ball{width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 30% 30%, #67e8f9 0, #22d3ee 30%, #06b6d4 70%, #155e75 100%);box-shadow:0 0 14px #22d3ee}
+    h1{font-size:18px;margin:0}
+    .sub{font-size:12px;color:var(--muted)}
+    .panel{background:var(--card);border:1px solid #1f2937;border-radius:14px;padding:12px;margin-top:12px}
+    .panel h3{margin:0 0 10px 0;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#cbd5e1}
+    input[type="text"], select{width:100%;background:#0b1324;border:1px solid #233047;color:var(--text);border-radius:10px;padding:10px;font-size:14px;outline:none}
+    .row{display:flex;gap:8px}
+    .btn{cursor:pointer;background:#0b1324;border:1px solid #233047;border-radius:10px;padding:8px 10px;color:#e5e7eb;font-size:13px}
+    .btn:hover{border-color:#334155}
+    .legend{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+    .chip{display:flex;gap:8px;align-items:center;border:1px solid #233047;background:#0b1324;border-radius:999px;padding:6px 10px;font-size:12px;color:#e2e8f0}
+    .dot{width:10px;height:10px;border-radius:50%}
+    .tog{display:flex;align-items:center;gap:8px;font-size:13px;color:#cbd5e1;margin:8px 0}
+    .help{font-size:12px;color:#9ca3af;line-height:1.5}
+    .right{position:relative}
+    #viz{width:100%;height:100%}
+    .tooltip{position:absolute;pointer-events:none;background:#0b1324;border:1px solid #233047;color:#e5e7eb;padding:10px 12px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:13px;max-width:380px}
+    .tooltip h4{margin:0 0 6px 0;font-size:14px}
+    .tooltip .muted{color:#94a3b8}
+    .footer{position:absolute;left:12px;bottom:10px;color:#94a3b8;font-size:12px;background:rgba(15,23,42,.7);padding:6px 10px;border-radius:10px;border:1px solid #1f2937}
+    .pill{padding:3px 8px;border:1px solid #334155;border-radius:999px;font-size:11px;color:#cbd5e1}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="left">
+    <div class="brand">
+      <div class="ball"></div>
+      <div>
+        <h1>Virus Taxonomy (Rooted)</h1>
+        <div class="sub">Common ancestor → Realm → … → Species</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Search</h3>
+      <div class="row">
+        <input id="search" type="text" placeholder="Find (e.g., Riboviria, Orthornavirae, Coronaviridae, SARS‑CoV‑2)" />
+        <button id="clearBtn" class="btn" title="Clear">✕</button>
+      </div>
+      <div class="help" style="margin-top:8px">Click a node to pin/unpin; drag to reposition; scroll to zoom. Double‑click background to reset view.</div>
+    </div>
+
+    <div class="panel">
+      <h3>Display</h3>
+      <div class="tog"><input id="toggleLabels" type="checkbox" checked> <label for="toggleLabels">Show labels</label></div>
+      <div class="tog"><input id="toggleSpecies" type="checkbox" checked> <label for="toggleSpecies">Show species</label></div>
+      <div style="margin-top:6px">
+        <label for="distance" style="font-size:12px;color:#cbd5e1">Link distance</label>
+        <input id="distance" type="range" min="30" max="280" value="140">
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Legend</h3>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Notes</h3>
+      <div class="help">
+        This file introduces a single <b>common ancestor</b> node that connects every lineage. The dataset below includes top‑level
+        ICTV ranks (realms → kingdoms → phyla → …) with a small, illustrative subset of orders/families/genera/species. To load a
+        comprehensive dataset, replace <code>DATA.nodes</code> with a full ICTV export using the same schema.
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+    <svg id="viz"></svg>
+    <div class="footer">
+      <span class="pill">Hover for details</span>
+      <span class="pill" style="margin-left:6px">Rooted layout</span>
+    </div>
+    <div id="tooltip" class="tooltip" style="display:none"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>
+// ============================================================
+// Data schema
+// id, name, rank ∈ {root, realm, kingdom, phylum, class, order, family, genus, species}
+// parent: id (or null for root). genome/envelope/desc optional.
+// ============================================================
+const RANKS = ['root','realm','kingdom','phylum','class','order','family','genus','species'];
+const COLORS = {
+  root:'#f472b6', realm:'#818cf8', kingdom:'#60a5fa', phylum:'#34d399', class:'#10b981', order:'#22d3ee',
+  family:'#f59e0b', genus:'#fb923c', species:'#f87171'
+};
+const RADII = {root:18, realm:14, kingdom:12, phylum:11, class:10, order:10, family:9, genus:8, species:6};
+
+const DATA = { nodes: [
+  // Root
+  N('root','Viral Common Ancestor','root',null,'—',true,'Abstract root to visualize a single connected tree.'),
+
+  // --- Realms (ICTV top rank; subset) ---
+  N('riboviria','Riboviria','realm','root','(+)ssRNA / (−)ssRNA / RT',true,'Viruses with RNA‑directed RNA polymerase or reverse transcriptase.'),
+  N('duplodnaviria','Duplodnaviria','realm','root','dsDNA',true,'Herpesviruses and tailed bacteriophages (HK97‑fold MCP).'),
+  N('varidnaviria','Varidnaviria','realm','root','dsDNA',true,'Large DNA viruses with double‑jelly‑roll MCP (e.g., pox‑like lineages).'),
+  N('monodnaviria','Monodnaviria','realm','root','ssDNA → dsDNA',true,'Circular ssDNA viruses using rolling‑circle replication.'),
+  N('adnaviria','Adnaviria','realm','root','linear dsDNA',true,'Archaeal filamentous viruses with A‑form DNA.'),
+  N('ribozyviria','Ribozyviria','realm','root','(+)ssRNA',true,'Hepatitis D‑like agents with ribozymes.'),
+
+  // --- Example kingdoms/phyla/classes/orders under realms (illustrative) ---
+  // Riboviria
+  N('orthornavirae','Orthornavirae','kingdom','riboviria','RNA genomes','enveloped varies','RNA viruses w/ RdRp (no RT).'),
+  N('pararnavirae','Pararnavirae','kingdom','riboviria','RT',true,'Reverse‑transcribing viruses.'),
+  N('lenarviricota','Lenarviricota','phylum','orthornavirae','(+)ssRNA',false,'Leviviruses, narnaviruses, etc.'),
+  N('pisuviricota','Pisuviricota','phylum','orthornavirae','(+)ssRNA',false,'Picornavirus‑like supergroup.'),
+  N('negarnaviricota','Negarnaviricota','phylum','orthornavirae','(−)ssRNA',true,'Negative‑strand RNA viruses.'),
+  N('duplornaviricota','Duplornaviricota','phylum','orthornavirae','dsRNA',false,'Double‑stranded RNA viruses.'),
+  N('cobfaviricetes','Cobfaviricetes','class','pisuviricota','(+)ssRNA',false,'Includes order Picornavirales.'),
+  N('piconavirales','Picornavirales','order','cobfaviricetes','(+)ssRNA',false,'Enteroviruses, hepatoviruses, etc.'),
+
+  // Duplodnaviria
+  N('heunggongvirae','Heunggongvirae','kingdom','duplodnaviria','dsDNA',true,'Herpesviruses.'),
+  N('ubiquiviricota','Uroviricota','phylum','duplodnaviria','dsDNA',false,'Tailed bacteriophages (Caudoviricetes).'),
+  N('herpesvirales','Herpesvirales','order','heunggongvirae','dsDNA',true,'Order containing Herpesviridae.'),
+
+  // Varidnaviria (illustrative)
+  N('bamfordvirae','Bamfordvirae','kingdom','varidnaviria','dsDNA',true,'Double‑jelly‑roll MCP clade.'),
+  N('pimascovirales','Pimascovirales','order','bamfordvirae','dsDNA',true,'Includes family Poxviridae.'),
+
+  // Monodnaviria (illustrative)
+  N('loebvirae','Loebvirae','kingdom','monodnaviria','ssDNA',false,'Microviridae and others.'),
+
+  // --- Families / Genera / Species (reuse earlier examples and attach to correct higher ranks) ---
+  // Picornavirales → Picornaviridae
+  N('picornaviridae','Picornaviridae','family','piconavirales','(+)ssRNA',false,'Enterovirus, Hepatovirus, Rhinovirus.'),
+  N('enterovirus','Enterovirus','genus','picornaviridae','(+)ssRNA',false,'Poliovirus, rhinoviruses.'),
+  N('poliovirus','Poliovirus','species','enterovirus','(+)ssRNA',false,'Can cause poliomyelitis.'),
+  N('rhinovirusa','Rhinovirus A','species','enterovirus','(+)ssRNA',false,'Common cold agent.'),
+  N('hepatovirus','Hepatovirus','genus','picornaviridae','(+)ssRNA',false,'Hepatitis A virus (HAV).'),
+  N('hav','Hepatitis A virus','species','hepatovirus','(+)ssRNA',false,'Typically acute, self‑limited hepatitis.'),
+
+  // Negarnaviricota → orders Orthomyxovirales & Mononegavirales (sample)
+  N('articulavirales','Articulavirales','order','negarnaviricota','(−)ssRNA (segmented)',true,'Influenza viruses.'),
+  N('orthomyxoviridae','Orthomyxoviridae','family','articulavirales','(−)ssRNA',true,'Influenza viruses.'),
+  N('influenzaa','Influenza A virus','genus','orthomyxoviridae','(−)ssRNA (segmented)',true,'Pandemic‑capable; many HA/NA subtypes.'),
+  N('h1n1','Influenza A (H1N1)','species','influenzaa','(−)ssRNA',true,'2009 pandemic strain example.'),
+
+  N('mononegavirales','Mononegavirales','order','negarnaviricota','(−)ssRNA',true,'Nonsegmented negative‑strand RNA viruses.'),
+  N('filoviridae','Filoviridae','family','mononegavirales','(−)ssRNA',true,'Ebola and Marburg viruses.'),
+  N('ebolavirus','Ebolavirus','genus','filoviridae','(−)ssRNA',true,'Multiple species; severe hemorrhagic fever.'),
+  N('ebola','Ebola virus (Zaire)','species','ebolavirus','(−)ssRNA',true,'Zaire ebolavirus species; high CFR.'),
+
+  // Pisuviricota → Nidovirales (for coronaviruses)
+  N('pisuviricota_nido','Nidovirales','order','pisuviricota','(+)ssRNA',true,'Includes family Coronaviridae.'),
+  N('coronaviridae','Coronaviridae','family','pisuviricota_nido','(+)ssRNA',true,'Corona‑like spikes; respiratory & enteric infections.'),
+  N('betacoronavirus','Betacoronavirus','genus','coronaviridae','(+)ssRNA',true,'Includes SARS‑related and MERS‑related viruses.'),
+  N('sarscov2','SARS‑CoV‑2','species','betacoronavirus','(+)ssRNA',true,'Agent of COVID‑19; species: SARS‑related coronaviruses.'),
+
+  // Duplodnaviria → Herpesvirales → Herpesviridae
+  N('herpesviridae','Herpesviridae','family','herpesvirales','dsDNA',true,'Large enveloped DNA viruses; latent lifelong infections.'),
+  N('simplexvirus','Simplexvirus','genus','herpesviridae','dsDNA',true,'HSV‑1/HSV‑2.'),
+  N('hsv1','Human herpesvirus 1 (HSV‑1)','species','simplexvirus','dsDNA',true,'Oral herpes; latent in trigeminal ganglia.')
+]};
+
+function N(id,name,rank,parent,genome,envelope,desc){return {id,name,rank,parent,genome,envelope,desc}}
+const links = DATA.nodes.filter(n=>n.parent).map(n=>({source:n.parent,target:n.id,type:'lineage'}));
+
+// ---- D3 Setup ----
+const svg = d3.select('#viz');
+const width = svg.node().clientWidth; const height = svg.node().clientHeight;
+const g = svg.append('g');
+const linkLayer = g.append('g').attr('stroke','var(--edge)').attr('stroke-opacity',0.5);
+const nodeLayer = g.append('g');
+const labelLayer = g.append('g');
+
+const zoom = d3.zoom().scaleExtent([0.25,3]).on('zoom',ev=>g.attr('transform',ev.transform));
+svg.call(zoom);
+
+const tip = d3.select('#tooltip');
+function showTip(html,x,y){
+  tip.html(html).style('display','block');
+  const pad=12; const rect=tip.node().getBoundingClientRect();
+  const cx=Math.min(window.innerWidth-rect.width-pad, Math.max(pad, x+12));
+  const cy=Math.min(window.innerHeight-rect.height-pad, Math.max(pad, y+12));
+  tip.style('left',cx+'px').style('top',cy+'px');
+}
+function hideTip(){tip.style('display','none')}
+
+const color = d=> COLORS[d.rank] || '#e5e7eb';
+const radius = d=> RADII[d.rank] || 6;
+
+let simulation = d3.forceSimulation(DATA.nodes)
+  .force('link', d3.forceLink(links).id(d=>d.id).distance(140).strength(.8))
+  .force('charge', d3.forceManyBody().strength(-220))
+  .force('center', d3.forceCenter(width/2, height/2))
+  .force('collide', d3.forceCollide(d=>radius(d)+2))
+  .force('radialByRank', radialByRank());
+
+function radialByRank(){
+  const ringGap = Math.min(width,height)/ (RANKS.length+2);
+  return (alpha)=>{
+    for(const d of DATA.nodes){
+      const idx = RANKS.indexOf(d.rank);
+      const r = Math.max(0, idx)*ringGap;
+      const a = (d.index/Math.max(1,DATA.nodes.length))*2*Math.PI;
+      const cx = width/2 + r*Math.cos(a), cy = height/2 + r*Math.sin(a);
+      d.vx += (cx - d.x)*0.0015*alpha; d.vy += (cy - d.y)*0.0015*alpha;
+    }
+  }
+}
+
+const link = linkLayer.selectAll('line').data(links).join('line').attr('stroke-width',1.3);
+const node = nodeLayer.selectAll('circle').data(DATA.nodes,d=>d.id).join('circle')
+  .attr('r', d=>radius(d))
+  .attr('fill', d=>color(d))
+  .attr('stroke', '#0b1220').attr('stroke-width',1.2)
+  .style('cursor','pointer')
+  .on('mouseover',(ev,d)=>{ showTip(tipHTML(d), ev.clientX, ev.clientY); d3.select(ev.currentTarget).attr('stroke','var(--hi)').attr('stroke-width',2); })
+  .on('mouseout',(ev,d)=>{ hideTip(); d3.select(ev.currentTarget).attr('stroke','#0b1220').attr('stroke-width',1.2); })
+  .on('click',(ev,d)=>{ d.fx = d.fx==null ? d.x : null; d.fy = d.fy==null ? d.y : null; d3.select(ev.currentTarget).attr('stroke', d.fx!=null ? 'var(--hi)' : '#0b1220'); })
+  .call(d3.drag()
+    .on('start',(ev,d)=>{ if(!ev.active) simulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+    .on('drag',(ev,d)=>{ d.fx=ev.x; d.fy=ev.y; })
+    .on('end',(ev,d)=>{ if(!ev.active) simulation.alphaTarget(0); }))
+
+const label = labelLayer.selectAll('text').data(DATA.nodes).join('text')
+  .text(d=>d.name).attr('font-size', d=>({root:13, realm:12, kingdom:12, phylum:11, class:11, order:11, family:10, genus:10, species:10}[d.rank]))
+  .attr('fill','#cbd5e1').attr('text-anchor','middle').attr('pointer-events','none').attr('dy', d=>-radius(d)-8);
+
+simulation.on('tick',()=>{
+  link.attr('x1', d=>d.source.x).attr('y1', d=>d.source.y).attr('x2', d=>d.target.x).attr('y2', d=>d.target.y);
+  node.attr('cx', d=>d.x).attr('cy', d=>d.y);
+  label.attr('x', d=>d.x).attr('y', d=>d.y);
+});
+
+// Controls
+const distance = document.getElementById('distance');
+const toggleLabels = document.getElementById('toggleLabels');
+const toggleSpecies = document.getElementById('toggleSpecies');
+
+distance.addEventListener('input', e=>{ simulation.force('link').distance(+e.target.value); simulation.alpha(0.5).restart(); });
+
+toggleLabels.addEventListener('change', e=>{ const on=e.target.checked; label.attr('display', on?null:'none'); });
+
+toggleSpecies.addEventListener('change', e=>{
+  const show = e.target.checked;
+  node.attr('display', d=> d.rank==='species' && !show ? 'none' : null);
+  label.attr('display', d=> d.rank==='species' && !show ? 'none' : label.attr('display'));
+  link.attr('display', l=> (!show && (l.source.rank==='genus' && l.target.rank==='species')) ? 'none' : null);
+});
+
+// Search
+const search = document.getElementById('search'); const clearBtn = document.getElementById('clearBtn');
+search.addEventListener('input', ()=>{
+  const q = search.value.trim().toLowerCase();
+  const m = s=> s.toLowerCase().includes(q);
+  node.attr('opacity', d=> q && !m(d.name) ? 0.15 : 1)
+      .attr('stroke-width', d=> q && m(d.name) ? 2 : 1.2)
+      .attr('stroke', d=> q && m(d.name) ? 'var(--hi)' : '#0b1220');
+  label.attr('opacity', d=> q && !m(d.name) ? 0.15 : 1);
+  link.attr('opacity', l=> q && !(m(l.source.name)||m(l.target.name)) ? 0.05 : 0.5);
+});
+clearBtn.addEventListener('click', ()=>{ search.value=''; search.dispatchEvent(new Event('input')); });
+
+// Legend
+const legend = document.getElementById('legend');
+legend.innerHTML = RANKS.map(r=>`<div class="chip"><span class="dot" style="background:${COLORS[r]}"></span>${r[0].toUpperCase()+r.slice(1)}</div>`).join('');
+
+// Reset view
+svg.on('dblclick', (ev)=>{ if(ev.target===svg.node()){ svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity); }});
+
+function tipHTML(d){
+  const lineage = buildLineage(d);
+  const env = d.envelope===true ? 'Enveloped' : (d.envelope===false ? 'Non‑enveloped' : '—');
+  return `
+    <h4>${escapeHTML(d.name)}</h4>
+    <div class="muted">Rank: <b>${d.rank}</b>${lineage?` · ${lineage}`:''}</div>
+    <div style="margin-top:6px">${escapeHTML(d.desc||'')}</div>
+    <div style="margin-top:8px" class="muted">Genome: ${escapeHTML(d.genome||'—')} · Envelope: ${env}</div>
+  `;
+}
+
+function buildLineage(d){
+  const byId = Object.fromEntries(DATA.nodes.map(n=>[n.id,n]));
+  const parts=[];
+  let cur=d; while(cur && cur.parent){ cur = byId[cur.parent]; if(cur) parts.unshift(cur.name); if(cur && cur.rank==='root') break; }
+  return parts.length? 'Lineage: ' + parts.join(' → ') : '';
+}
+function escapeHTML(str){ return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[s]); }
+
+// Center root
+const root = DATA.nodes.find(n=>n.rank==='root');
+root.x = width/2; root.y = height/2; root.fx = root.x; root.fy = root.y;
+simulation.alpha(1).restart();
+
+// Fit to viewport initially
+setTimeout(()=>{
+  const bounds = g.node().getBBox();
+  const fullW = width, fullH = height;
+  const midX = bounds.x + bounds.width/2, midY = bounds.y + bounds.height/2;
+  let scale = 0.85 / Math.max(bounds.width/fullW, bounds.height/fullH);
+  scale = Math.max(0.25, Math.min(2, scale));
+  const translate = [fullW/2 - scale*midX, fullH/2 - scale*midY];
+  const t = d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale);
+  svg.call(zoom.transform, t);
+}, 500);
+</script>
+</body>
+</html>
